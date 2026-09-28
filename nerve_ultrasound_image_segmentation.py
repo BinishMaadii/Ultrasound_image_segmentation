@@ -28,3 +28,33 @@ np.random.seed(SEED)
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print("device:", device)
 
+
+##### each training file is named as.tif. aand the subject number is the patient
+ 
+all_tifs = glob.glob(os.path.join(DATA_DIR, "**", "*.tif"), recursive=True)
+print(f"Found {len(all_tifs)} .tif file(s) under {DATA_DIR}")
+ 
+assert len(all_tifs) > 0, (
+    f"No .tif file found under {DATA_DIR}. "
+    f"Contents of that folder: {os.listdir(DATA_DIR) if os.path.isdir(DATA_DIR) else 'PATH DOES NOT EXIST'}"
+)
+ 
+rows = []
+for p in all_tifs:
+    m = re.match(r"^(\d+)_(\d+)\.tif$", os.path.basename(p))
+    if m is None:
+        continue                      # skips masks and unlabeled test frames
+    mask_p = p[:-4] + "_mask.tif"
+    if os.path.exists(mask_p):
+        rows.append({"subject": int(m.group(1)), "frame": int(m.group(2)),
+                     "image_path": p, "mask_path": mask_p})
+ 
+meta = pd.DataFrame(rows).sort_values(["subject", "frame"]).reset_index(drop=True)
+print(f"{len(meta)} labeled frames from {meta['subject'].nunique()} subjects")
+ 
+first = Image.open(meta.loc[0, "image_path"])
+print("raw frame size (W x H):", first.size, " mode:", first.mode)
+
+
+
+
