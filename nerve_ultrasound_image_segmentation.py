@@ -371,6 +371,120 @@ plt.tight_layout()
 plt.savefig("04_training_curves.png", dpi=150)
 plt.show()
  
+
+
+##### 8. Post-processing, tuned on validation only
+#### Two decisions turn probabilities into a final mask:
+####   pixel threshold: which pixels count as nerve
+####   minimum area:    if fewer pixels than this survive, call the frame empty
+#### The minimum area is what fixes the frame-level imbalance at inference time: small false-positive
+#### blobs on empty frames cost a full Dice point each, so removing them matters a lot.
+#### Both are chosen on val, then frozen. The test set is not touched until step 9.
  
+def postprocess(probs, pix_thresh, min_area):
+    masks = (probs > pix_thresh).astype(np.float32)
+    small_masks = masks.sum(axis=(1, 2)) < min_area
+    masks[small_masks] = 0
+    return masks
+ 
+val_probs = predict_probs(val_loader)
+grid = [(t, a) for t in (0.3, 0.4, 0.5, 0.6, 0.7) for a in (0, 25, 50, 100, 150, 200, 300)]
+scores = {(t, a): dice_per_image(postprocess(val_probs, t, a), M[idx_val]).mean() for t, a in grid}
+PIX_THRESH, MIN_AREA = max(scores, key=scores.get)
+print(f"\nchosen on val: pixel threshold {PIX_THRESH}, min area {MIN_AREA} px "
+      f"(val Dice {scores[(PIX_THRESH, MIN_AREA)]:.4f}, without post-processing {scores[(0.5, 0)]:.4f})")
+if postprocess(val_probs, PIX_THRESH, MIN_AREA).sum() == 0:
+    print("WARNING: the chosen settings predict an empty mask on every val frame. "
+          "The model is not beating the always-empty baseline yet (train longer or check the data).")
+ 
+
+
+
+
+
+##### 9. Test evaluation on unseen patients
+#### Three views of the same predictions:
+####   mean Dice (the segmentation score, compared with the always-empty baseline)
+####   nerve present / absent as a classification (same report as the wafer pipeline)
+####   Dice per subject, because a mean can hide one patient where the model fails completely
+ 
+test_probs = predict_probs(test_loader)
+test_masks = postprocess(test_probs, PIX_THRESH, MIN_AREA)
+test_dice = dice_per_image(test_masks, M[idx_test])
+baseline_test = (1 - present[idx_test]).mean()
+ 
+has_nerve = present[idx_test] == 1
+print(f"\nTEST mean Dice:                  {test_dice.mean():.4f}")
+print(f"TEST 'always empty' baseline:    {baseline_test:.4f}")
+print(f"TEST Dice on frames with nerve:  {test_dice[has_nerve].mean():.4f}")
+ 
+pred_present = (test_masks.sum(axis=(1, 2)) > 0).astype(int)
+true_present = present[idx_test]
+print("\nNerve present / absent:")
+print(classification_report(true_present, pred_present, target_names=["no nerve", "nerve"], digits=3, zero_division=0))
+print("macro F1:", round(f1_score(true_present, pred_present, average="macro"), 3))
+print("confusion matrix (rows = true, cols = predicted):")
+print(confusion_matrix(true_present, pred_present))
+ 
+subj_dice = pd.Series(test_dice, index=groups[idx_test]).groupby(level=0).mean().sort_values()
+print("\nDice per test subject:")
+print(subj_dice.round(3).to_string())
+ 
+fig, ax = plt.subplots(figsize=(8, 4))
+subj_dice.plot(kind="bar", ax=ax)
+ax.axhline(test_dice.mean(), color="gray", ls="--", label="mean")
+ax.set_title("Test Dice per subject"); ax.set_xlabel("subject"); ax.set_ylabel("mean Dice"); ax.legend()
+plt.tight_layout()
+plt.savefig("05_dice_per_subject.png", dpi=150)
+plt.show()
+ 
+# %% Best and worst test frames that contain a nerve (green = truth, red = prediction)
+nerve_ids = np.where(has_nerve)[0]
+order = nerve_ids[np.argsort(test_dice[nerve_ids])]
+show = list(order[-3:][::-1]) + list(order[:3])
+fig, axes = plt.subplots(2, 3, figsize=(12, 6))
+for ax, k in zip(axes.flat, show):
+    ax.imshow(X[idx_test][k], cmap="gray")
+    ax.contour(M[idx_test][k], levels=[0.5], colors="lime", linewidths=1)
+    if test_masks[k].any():
+        ax.contour(test_masks[k], levels=[0.5], colors="red", linewidths=1)
+    ax.set_title(f"subject {groups[idx_test][k]}  Dice {test_dice[k]:.2f}")
+    ax.axis("off")
+plt.suptitle("Top row: best 3   Bottom row: worst 3   (green = truth, red = prediction)")
+plt.tight_layout()
+plt.savefig("06_best_and_worst_predictions.png", dpi=150)
+plt.show()
+ 
+ 
+##### 10. Export for integration
+#### This makes the research model runnable on the customer side in the following steps
+#### TorchScript produces a single file that libtorch can load from C++ without any Python code.
+#### The post-processing values go into a small JSON next to it, because they are part of the model:
+#### The same weights with a different threshold give different results.
+#### The reload check confirms the exported file gives the same output as the Python model.
+ 
+model.eval().cpu()
+example = torch.from_numpy(X[idx_test[:1]]).unsqueeze(1)
+scripted = torch.jit.trace(model, example)
+scripted.save("nerve_unet_torchscript.pt")
+ 
+reloaded = torch.jit.load("nerve_unet_torchscript.pt")
+with torch.no_grad():
+    max_diff = (reloaded(example) - model(example)).abs().max().item()
+print(f"\nexported nerve_unet_torchscript.pt, max difference after reload: {max_diff:.2e}")
+assert max_diff < 1e-4
+ 
+with open("nerve_unet_config.json", "w") as f:
+    json.dump({
+        "input_shape": [1, 1, IMG_H, IMG_W],
+        "input_scaling": "grayscale / 255, bilinear resize to input_shape",
+        "output": "logits, apply sigmoid",
+        "pixel_threshold": float(PIX_THRESH),
+        "min_area_px": int(MIN_AREA),
+        "split": "by subject (GroupShuffleSplit), seed %d" % SEED,
+        "test_mean_dice": round(float(test_dice.mean()), 4),
+        "test_baseline_always_empty": round(float(baseline_test), 4),
+    }, f, indent=2)
+print("saved nerve_unet_config.json")
 
 
