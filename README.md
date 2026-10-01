@@ -1,43 +1,30 @@
-#Ultrasound Nerve Segmentation Pipeline
+# Ultrasound Nerve Segmentation with PyTorch & Small U-Net
 
-An end-to-end PyTorch deep learning pipeline designed to segment the brachial plexus nerve in ultrasound images using a lightweight U-Net architecture. This project incorporates rigorous medical data diagnostic steps—such as duplicate detection, conflicting label filtering, and patient-level cross-validation—to ensure zero data leakage and high real-world performance on unseen clinical subjects.
+An end-to-end deep learning pipeline for segmenting the brachial plexus nerve in ultrasound images using PyTorch. Designed for high reliability in medical imaging, this workflow prevents data leakage through patient-grouped cross-validation, cleans noise via near-duplicate pair analysis, and exports deployment-ready TorchScript models with sidecar configurations.
 
+---
 
-Key FeaturesPatient Leakage Prevention: Uses group-based splitting (GroupShuffleSplit) on patient IDs to guarantee that frames from the same subject never cross into validation or test sets.Label Conflict Diagnostics: Identifies near-duplicate frames using downsampled correlation analysis ($r > 0.99$) and flags contradictory annotations (where one frame marks a nerve and an identical frame marks background).Custom Small U-Net: A memory-efficient U-Net variant (~500k parameters) optimized for rapid training and edge deployment.Hybrid Loss Function: Combines Binary Cross-Entropy (BCE) with Soft Dice Loss to effectively address pixel-level class imbalance.Inference Post-Processing: Optimizes pixel decision thresholds and minimum connected area thresholds to remove small false-positive blobs on negative frames.Production-Ready Export: Saves model weights as a standalone TorchScript module (.pt) and writes metadata/post-processing thresholds to a json configuration file for deployment in C++ or Python environments.
+## Key Features
 
-Dataset & PreprocessingThe pipeline expects data structured from the Kaggle Ultrasound Nerve Segmentation dataset:Image Dimensions: Resized from $420 \times 580$ to $96 \times 128$ while preserving aspect ratio (~1.38).Interpolation Strategy:Images: Resized with Bilinear Interpolation to maintain continuous ultrasound echo intensity gradients.Masks: Resized with Nearest-Neighbor Interpolation to prevent soft boundary artifacts and preserve exact binary labels.
+* **Patient-Grouped Splitting (`GroupShuffleSplit`):** Prevents patient data leakage across training, validation, and test splits ($0\%$ patient overlap).
+* **Near-Duplicate & Conflict Detection:** Uses Pearson correlation ($r > 0.99$) on image embeddings to identify near-duplicate frames and resolve conflicting labels.
+* **Hybrid Loss Function:** Combines **Binary Cross-Entropy (BCE)** and **Soft Dice Loss** to handle extreme pixel-level class imbalance.
+* **Domain-Specific Augmentation:** Applies gain (brightness) and gamma (contrast) variations to simulate ultrasound machine calibration variances without spatial flipping.
+* **Val-Tuned Post-Processing:** Optimizes pixel-probability and minimum-connected-area thresholds to reduce false positives on empty background scans.
+* **Production Deployment:** Exports a serialized **TorchScript (`.pt`)** model and sidecar JSON configuration for standalone inference in C++/libtorch.
 
-Architecture Overview
+---
 
-Input Image (1x96x128)
-       │
-   [ConvBlock] ─────────────── Skip 1 ──────────────┐ (base = 16)
-       │                                            │
-   [MaxPool]                                        │
-   [ConvBlock] ─────────────── Skip 2 ──────────┐   │
-       │                                        │   │
-   [MaxPool]                                    │   │
-   [ConvBlock] ─────────────── Skip 3 ──────┐   │   │
-       │                                    │   │   │
-   [MaxPool]                                │   │   │
-  [Bottleneck] (base * 8)                   │   │   │
-       │                                    │   │   │
-[ConvTranspose + Cat] ◄─────────────────────┘   │   │
-   [ConvBlock]                                  │   │
-       │                                        │   │
-[ConvTranspose + Cat] ◄─────────────────────────┘   │
-   [ConvBlock]                                      │
-       │                                            │
-[ConvTranspose + Cat] ◄─────────────────────────────┘
-   [ConvBlock]
-       │
-  [Conv2d (1x1)] ──► Logits Output (1x96x128)
+## Directory Structure
 
-
-
-####
-#####
-
-Installation & RequirementsEnsure you have the following dependencies installed:pip install torch numpy pandas matplotlib pillow scikit-learn
-Usage1. Training & EvaluationRun the python script to train the model, evaluate on unseen patients, and optimize post-processing thresholds:python train.py
-2. Output ArtifactsThe training script will generate several outputs in your workspace:FileDescription01_subjects_and_balance.pngDistribution of frames and positive nerve samples per subject.02_examples_with_masks.pngVisual ground-truth mask contours overlaid on sample ultrasound images.03_conflicting_labels.pngVisual comparison of conflicting near-duplicate image pairs.04_training_curves.pngLoss curves (BCE + Dice) and Validation Dice score progression.05_dice_per_subject.pngTest set Dice score broken down by individual subject.06_best_and_worst_predictions.pngVisualization comparing ground truth (green) vs predicted mask (red).nerve_unet_torchscript.ptTraced TorchScript model ready for C++ or Python deployment.nerve_unet_config.jsonJSON sidecar file containing operational parameters and thresholds.
+```text
+.
+├── 01_subjects_and_balance.png       # Dataset distribution per subject
+├── 02_examples_with_masks.png        # Sample ultrasound scans with mask overlays
+├── 03_conflicting_labels.png        # Near-identical scan diagnostics
+├── 04_training_curves.png           # Training loss and validation Dice curves
+├── 05_dice_per_subject.png          # Test set evaluation per patient
+├── 06_best_and_worst_predictions.png# Model prediction visual error analysis
+├── nerve_unet_torchscript.pt        # Exported TorchScript model
+├── nerve_unet_config.json           # Post-processing & normalization metadata
+└── train_and_eval.py                 # Core pipeline implementation
