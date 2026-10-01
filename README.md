@@ -32,3 +32,12 @@ Input Image (1x96x128)
    [ConvBlock]
        │
   [Conv2d (1x1)] ──► Logits Output (1x96x128)
+
+
+
+####
+#####
+
+Installation & RequirementsEnsure you have the following dependencies installed:pip install torch numpy pandas matplotlib pillow scikit-learn
+Usage1. Training & EvaluationRun the python script to train the model, evaluate on unseen patients, and optimize post-processing thresholds:python train.py
+2. Output ArtifactsThe training script will generate several outputs in your workspace:FileDescription01_subjects_and_balance.pngDistribution of frames and positive nerve samples per subject.02_examples_with_masks.pngVisual ground-truth mask contours overlaid on sample ultrasound images.03_conflicting_labels.pngVisual comparison of conflicting near-duplicate image pairs.04_training_curves.pngLoss curves (BCE + Dice) and Validation Dice score progression.05_dice_per_subject.pngTest set Dice score broken down by individual subject.06_best_and_worst_predictions.pngVisualization comparing ground truth (green) vs predicted mask (red).nerve_unet_torchscript.ptTraced TorchScript model ready for C++ or Python deployment.nerve_unet_config.jsonJSON sidecar file containing operational parameters and thresholds.
