@@ -7,3 +7,28 @@ Key FeaturesPatient Leakage Prevention: Uses group-based splitting (GroupShuffle
 
 Dataset & PreprocessingThe pipeline expects data structured from the Kaggle Ultrasound Nerve Segmentation dataset:Image Dimensions: Resized from $420 \times 580$ to $96 \times 128$ while preserving aspect ratio (~1.38).Interpolation Strategy:Images: Resized with Bilinear Interpolation to maintain continuous ultrasound echo intensity gradients.Masks: Resized with Nearest-Neighbor Interpolation to prevent soft boundary artifacts and preserve exact binary labels.
 
+Architecture Overview
+
+Input Image (1x96x128)
+       │
+   [ConvBlock] ─────────────── Skip 1 ──────────────┐ (base = 16)
+       │                                            │
+   [MaxPool]                                        │
+   [ConvBlock] ─────────────── Skip 2 ──────────┐   │
+       │                                        │   │
+   [MaxPool]                                    │   │
+   [ConvBlock] ─────────────── Skip 3 ──────┐   │   │
+       │                                    │   │   │
+   [MaxPool]                                │   │   │
+  [Bottleneck] (base * 8)                   │   │   │
+       │                                    │   │   │
+[ConvTranspose + Cat] ◄─────────────────────┘   │   │
+   [ConvBlock]                                  │   │
+       │                                        │   │
+[ConvTranspose + Cat] ◄─────────────────────────┘   │
+   [ConvBlock]                                      │
+       │                                            │
+[ConvTranspose + Cat] ◄─────────────────────────────┘
+   [ConvBlock]
+       │
+  [Conv2d (1x1)] ──► Logits Output (1x96x128)
